@@ -6,166 +6,106 @@
 <title>Mökin sää</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 <style>
-  :root { --bg:#0e1116; --card:#171b22; --fg:#eaeef5; --muted:#a8b3c7; --accent:#7cc5ff; }
-  *{box-sizing:border-box}
-  body{margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--fg);}
-  header{padding:24px 16px; text-align:center}
-  h1{margin:0 0 8px 0; font-size:clamp(20px, 3vw, 28px)}
-  .subtitle{color:var(--muted); font-size:14px}
-  .wrap{max-width:1100px; margin:0 auto; padding:16px}
-  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-bottom:16px}
-  .card{background:var(--card); border:1px solid #222834; border-radius:12px; padding:16px}
-  .label{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em}
-  .value{font-size:28px; margin-top:6px}
-  .updated{color:var(--muted); font-size:12px; margin-top:6px}
-  .panel{background:var(--card); border:1px solid #222834; border-radius:12px; padding:12px 12px 18px; margin-bottom:16px}
-  canvas{width:100%; height:320px}
+  body { background: #0e1116; color: #eaeef5; font-family: system-ui, sans-serif; margin: 0; }
+  header { text-align: center; padding: 20px; }
+  .cards { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .card { background: #171b22; padding: 10px 20px; border-radius: 10px; min-width: 180px; text-align: center; }
+  .label { font-size: 12px; color: #a8b3c7; }
+  .value { font-size: 28px; margin-top: 5px; }
+  .updated { font-size: 12px; color: #a8b3c7; margin-top: 4px; }
+  canvas { background: #171b22; border-radius: 10px; padding: 10px; }
 </style>
 </head>
 <body>
-  <header>
-    <h1>Mökin sää</h1>
-    <div class="subtitle">ThingSpeak → GitHub Pages (public-kanava, ei API keytä)</div>
-  </header>
-
-  <div class="wrap">
-    <div class="cards">
-      <div class="card">
-        <div class="label">Lämpötila</div>
-        <div class="value" id="tempVal">–</div>
-        <div class="updated" id="tempTime">—</div>
-      </div>
-      <div class="card">
-        <div class="label">Kosteus</div>
-        <div class="value" id="humVal">–</div>
-        <div class="updated" id="humTime">—</div>
-      </div>
-      <div class="card">
-        <div class="label">Ilmanpaine</div>
-        <div class="value" id="pressVal">–</div>
-        <div class="updated" id="pressTime">—</div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <canvas id="tempChart"></canvas>
-    </div>
-
-    <div class="panel">
-      <canvas id="humChart"></canvas>
-    </div>
-
-    <div class="panel">
-      <canvas id="pressChart"></canvas>
-    </div>
+<header>
+  <h1>Mökin sää</h1>
+  <p>ThingSpeak → GitHub Pages (public-kanava)</p>
+</header>
+<div class="cards">
+  <div class="card">
+    <div class="label">Lämpötila</div>
+    <div class="value" id="tempVal">–</div>
+    <div class="updated" id="tempTime">—</div>
   </div>
+  <div class="card">
+    <div class="label">Kosteus</div>
+    <div class="value" id="humVal">–</div>
+    <div class="updated" id="humTime">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Ilmanpaine</div>
+    <div class="value" id="pressVal">–</div>
+    <div class="updated" id="pressTime">—</div>
+  </div>
+</div>
+<canvas id="tempChart"></canvas>
+<canvas id="humChart"></canvas>
+<canvas id="pressChart"></canvas>
 
 <script>
-const CHANNEL_ID = 3028480;
-const FIELD_TEMP  = 1;
-const FIELD_HUM   = 2;
-const FIELD_PRESS = 3;
+const CHANNEL_ID = '3028480';
+const FIELD_TEMP = 1, FIELD_HUM = 2, FIELD_PRESS = 3;
 
-const el = {
-  tempVal:  document.getElementById('tempVal'),
-  tempTime: document.getElementById('tempTime'),
-  humVal:   document.getElementById('humVal'),
-  humTime:  document.getElementById('humTime'),
-  pressVal: document.getElementById('pressVal'),
-  pressTime:document.getElementById('pressTime'),
-};
+function apiUrl(days=7) {
+  return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?days=${days}&timezone=Europe/Helsinki&limit=8000`;
+}
+function fmtNum(v, d=1) { const n = parseFloat(v); return isFinite(n) ? n.toFixed(d).replace('.', ',') : '–'; }
+function fmtTime(iso) { return iso ? new Date(iso).toLocaleString('fi-FI', { hour12:false }) : '—'; }
 
-let charts = {};
-
-function fmtNum(x, digits=1) {
-  const n = parseFloat(x);
-  if (Number.isFinite(n)) return n.toFixed(digits).replace('.', ',');
-  return '–';
+function updateCard(feeds, field, valEl, timeEl, unit) {
+  const last = [...feeds].reverse().find(f => f[`field${field}`] !== null && f[`field${field}`] !== undefined && f[`field${field}`] !== '' && !Number.isNaN(Number(f[`field${field}`])));
+  if (last) {
+    valEl.textContent = `${fmtNum(last[`field${field}`])} ${unit}`;
+    timeEl.textContent = `Päivitetty: ${fmtTime(last.created_at)}`;
+  }
 }
-function fmtTime(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString('fi-FI', { hour12:false });
-}
-function makeUrl(days) {
-  const params = new URLSearchParams();
-  params.set('days', String(days));
-  params.set('timezone', 'Europe/Helsinki');
-  params.set('limit', '8000');
-  return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${params.toString()}`;
-}
-async function fetchData(days){
-  const url = makeUrl(days);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('ThingSpeak haku epäonnistui');
-  return res.json();
-}
-
-function makeDataset(feeds, fieldNo, label) {
-  const data = [];
+function makeDataset(feeds, field, label) {
   const labels = [];
+  const data = [];
   for (const f of feeds) {
-    const v = f[`field${fieldNo}`];
-    if (v) {
+    const v = f[`field${field}`];
+    if (v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v))) {
       labels.push(new Date(f.created_at));
       data.push(Number(v));
     }
   }
   return { labels, data, label };
 }
-
-function ensureChart(ctx, cfgKey, labels, data, seriesLabel, unit) {
-  const config = {
+function drawChart(ctx, dataset, unit) {
+  new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets: [{ label: seriesLabel, data, fill: false, tension: 0.2, borderWidth: 2, pointRadius: 0 }]},
+    data: { labels: dataset.labels, datasets: [{ label: dataset.label, data: dataset.data, borderWidth: 2, pointRadius: 0 }] },
     options: {
       responsive: true,
-      interaction: { mode: 'nearest', intersect: false },
-      scales: { x: { type: 'time' }, y: { beginAtZero: false } }
+      scales: {
+        x: {
+          type: 'time',
+          time: { tooltipFormat: 'dd.MM.yyyy HH:mm', displayFormats: { hour: 'dd.MM HH:mm', day: 'dd.MM.yyyy' } },
+          ticks: { maxTicksLimit: 9 }
+        },
+        y: { beginAtZero: false }
+      },
+      plugins: { tooltip: { callbacks: { label: c => `${c.parsed.y} ${unit}` } } }
     }
-  };
-  if (charts[cfgKey]) {
-    charts[cfgKey].data.labels = labels;
-    charts[cfgKey].data.datasets[0].data = data;
-    charts[cfgKey].update();
-  } else {
-    charts[cfgKey] = new Chart(ctx, config);
-  }
+  });
 }
 
-function updateLatestCard(feeds, fieldNo, valueEl, timeEl, suffix) {
-  for (let i = feeds.length - 1; i >= 0; i--) {
-    const v = feeds[i][`field${fieldNo}`];
-    if (v) {
-      valueEl.textContent = `${fmtNum(v)}${suffix ? ' ' + suffix : ''}`;
-      timeEl.textContent  = `Päivitetty: ${fmtTime(feeds[i].created_at)}`;
-      return;
-    }
-  }
-  valueEl.textContent = '–';
-  timeEl.textContent  = '—';
-}
-
-async function render(){
-  try {
-    const { feeds } = await fetchData(7);
-    updateLatestCard(feeds, FIELD_TEMP,  el.tempVal,  el.tempTime,  '°C');
-    updateLatestCard(feeds, FIELD_HUM,   el.humVal,   el.humTime,   '%');
-    updateLatestCard(feeds, FIELD_PRESS, el.pressVal, el.pressTime, 'hPa');
-    const t = makeDataset(feeds, FIELD_TEMP,  'Lämpötila');
-    const h = makeDataset(feeds, FIELD_HUM,   'Kosteus');
-    const p = makeDataset(feeds, FIELD_PRESS, 'Ilmanpaine');
-    ensureChart(document.getElementById('tempChart'),  'temp',  t.labels, t.data, 'Lämpötila', '°C');
-    ensureChart(document.getElementById('humChart'),   'hum',   h.labels, h.data, 'Kosteus', '%');
-    ensureChart(document.getElementById('pressChart'), 'press', p.labels, p.data, 'Ilmanpaine', 'hPa');
-  } catch(e) {
+fetch(apiUrl(), { cache: 'no-store' })
+  .then(r => r.json())
+  .then(({feeds}) => {
+    updateCard(feeds, FIELD_TEMP, document.getElementById('tempVal'), document.getElementById('tempTime'), '°C');
+    updateCard(feeds, FIELD_HUM, document.getElementById('humVal'), document.getElementById('humTime'), '%');
+    updateCard(feeds, FIELD_PRESS, document.getElementById('pressVal'), document.getElementById('pressTime'), 'hPa');
+    drawChart(document.getElementById('tempChart'), makeDataset(feeds, FIELD_TEMP, 'Lämpötila'), '°C');
+    drawChart(document.getElementById('humChart'), makeDataset(feeds, FIELD_HUM, 'Kosteus'), '%');
+    drawChart(document.getElementById('pressChart'), makeDataset(feeds, FIELD_PRESS, 'Ilmanpaine'), 'hPa');
+  })
+  .catch(e => {
     console.error(e);
-    alert('Datan haku epäonnistui. Tarkista CHANNEL_ID.');
-  }
-}
-
-render();
+    alert('Datan haku epäonnistui. Tarkista CHANNEL_ID ja että kanava on public.');
+  });
 </script>
 </body>
 </html>
