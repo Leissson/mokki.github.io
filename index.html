@@ -19,20 +19,14 @@
   .label{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em}
   .value{font-size:28px; margin-top:6px}
   .updated{color:var(--muted); font-size:12px; margin-top:6px}
-  .controls{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0 16px}
-  select,button{background:#0f131a; color:var(--fg); border:1px solid #2a3140; border-radius:10px; padding:8px 10px; cursor:pointer}
-  button:hover,select:hover{border-color:#3a4356}
   .panel{background:var(--card); border:1px solid #222834; border-radius:12px; padding:12px 12px 18px; margin-bottom:16px}
   canvas{width:100%; height:320px}
-  footer{color:var(--muted); font-size:12px; text-align:center; padding:24px}
-  a{color:var(--accent); text-decoration:none}
-  a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
   <header>
     <h1>Mökin sää</h1>
-    <div class="subtitle">ThingSpeak → GitHub Pages</div>
+    <div class="subtitle">ThingSpeak → GitHub Pages (public-kanava, ei API keytä)</div>
   </header>
 
   <div class="wrap">
@@ -55,17 +49,6 @@
     </div>
 
     <div class="panel">
-      <div class="controls">
-        <label for="rangeSel" class="label" style="margin-right:6px;">Aikaväli</label>
-        <select id="rangeSel">
-          <option value="1d">Viimeinen päivä</option>
-          <option value="3d">3 päivää</option>
-          <option value="7d" selected>7 päivää</option>
-          <option value="30d">30 päivää</option>
-          <option value="90d">90 päivää</option>
-        </select>
-        <button id="refreshBtn">Päivitä</button>
-      </div>
       <canvas id="tempChart"></canvas>
     </div>
 
@@ -78,21 +61,11 @@
     </div>
   </div>
 
-  <footer>
-    Päivittyy suoraan ThingSpeakistä selaimessa. Jos kanava on private, lisää READ API Key koodiin.
-  </footer>
-
 <script>
-/* ========= MUOKKAA NÄMÄ ========= */
-const CHANNEL_ID = '3028480';  // esim. "1234567"
-const READ_API_KEY = 'BECW0OWUXX79PC39'; // jos public-kanava, jätä tyhjäksi. Muuten esim. "ABCDE..."
-const FIELD_TEMP  = 1;   // lämpötila fieldi #
-const FIELD_HUM   = 2;   // kosteus fieldi #
-const FIELD_PRESS = 3;   // paine fieldi #
-/* ================================= */
-
-const rangeSel   = document.getElementById('rangeSel');
-const refreshBtn = document.getElementById('refreshBtn');
+const CHANNEL_ID = 3028480;
+const FIELD_TEMP  = 1;
+const FIELD_HUM   = 2;
+const FIELD_PRESS = 3;
 
 const el = {
   tempVal:  document.getElementById('tempVal'),
@@ -115,27 +88,18 @@ function fmtTime(iso) {
   const d = new Date(iso);
   return d.toLocaleString('fi-FI', { hour12:false });
 }
-function toUrlDays(days) {
-  // ThingSpeak tukee &days=N (takautuva N päivää) tai &start=&end=
+function makeUrl(days) {
   const params = new URLSearchParams();
-  if (READ_API_KEY) params.set('api_key', READ_API_KEY);
   params.set('days', String(days));
-  // rajataan maks. 8000 riviin, muuta tarpeen mukaan
   params.set('timezone', 'Europe/Helsinki');
-  params.set('offset', '0');
   params.set('limit', '8000');
   return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${params.toString()}`;
 }
-function parseRangeValue(val) {
-  if (val.endsWith('d')) return parseInt(val,10);
-  return 7;
-}
 async function fetchData(days){
-  const url = toUrlDays(days);
+  const url = makeUrl(days);
   const res = await fetch(url);
   if (!res.ok) throw new Error('ThingSpeak haku epäonnistui');
-  const json = await res.json();
-  return json;
+  return res.json();
 }
 
 function makeDataset(feeds, fieldNo, label) {
@@ -143,7 +107,7 @@ function makeDataset(feeds, fieldNo, label) {
   const labels = [];
   for (const f of feeds) {
     const v = f[`field${fieldNo}`];
-    if (v !== null && v !== undefined && v !== '') {
+    if (v) {
       labels.push(new Date(f.created_at));
       data.push(Number(v));
     }
@@ -154,39 +118,11 @@ function makeDataset(feeds, fieldNo, label) {
 function ensureChart(ctx, cfgKey, labels, data, seriesLabel, unit) {
   const config = {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: seriesLabel,
-        data,
-        fill: false,
-        tension: 0.2,
-        borderWidth: 2,
-        pointRadius: 0,
-      }]
-    },
+    data: { labels, datasets: [{ label: seriesLabel, data, fill: false, tension: 0.2, borderWidth: 2, pointRadius: 0 }]},
     options: {
       responsive: true,
       interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { display: true },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => {
-              const v = ctx.parsed.y;
-              return `${seriesLabel}: ${v}${unit ? ' ' + unit : ''}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: 'time',
-          time: { tooltipFormat: 'dd.MM.yyyy HH:mm', displayFormats: { hour: 'dd.MM HH:mm', day:'dd.MM' } },
-          ticks: { autoSkip: true, maxTicksLimit: 9 }
-        },
-        y: { beginAtZero: false }
-      }
+      scales: { x: { type: 'time' }, y: { beginAtZero: false } }
     }
   };
   if (charts[cfgKey]) {
@@ -199,13 +135,11 @@ function ensureChart(ctx, cfgKey, labels, data, seriesLabel, unit) {
 }
 
 function updateLatestCard(feeds, fieldNo, valueEl, timeEl, suffix) {
-  // etsitään viimeisin feed jolla on arvo
   for (let i = feeds.length - 1; i >= 0; i--) {
-    const f = feeds[i];
-    const v = f[`field${fieldNo}`];
-    if (v !== null && v !== undefined && v !== '') {
+    const v = feeds[i][`field${fieldNo}`];
+    if (v) {
       valueEl.textContent = `${fmtNum(v)}${suffix ? ' ' + suffix : ''}`;
-      timeEl.textContent  = `Päivitetty: ${fmtTime(f.created_at)}`;
+      timeEl.textContent  = `Päivitetty: ${fmtTime(feeds[i].created_at)}`;
       return;
     }
   }
@@ -215,35 +149,21 @@ function updateLatestCard(feeds, fieldNo, valueEl, timeEl, suffix) {
 
 async function render(){
   try {
-    const days = parseRangeValue(rangeSel.value);
-    const { feeds } = await fetchData(days);
-
-    // Päivitä kortit
+    const { feeds } = await fetchData(7);
     updateLatestCard(feeds, FIELD_TEMP,  el.tempVal,  el.tempTime,  '°C');
     updateLatestCard(feeds, FIELD_HUM,   el.humVal,   el.humTime,   '%');
     updateLatestCard(feeds, FIELD_PRESS, el.pressVal, el.pressTime, 'hPa');
-
-    // Datasetit + käyrät
     const t = makeDataset(feeds, FIELD_TEMP,  'Lämpötila');
     const h = makeDataset(feeds, FIELD_HUM,   'Kosteus');
     const p = makeDataset(feeds, FIELD_PRESS, 'Ilmanpaine');
-
-    // Piirrä
     ensureChart(document.getElementById('tempChart'),  'temp',  t.labels, t.data, 'Lämpötila', '°C');
     ensureChart(document.getElementById('humChart'),   'hum',   h.labels, h.data, 'Kosteus', '%');
     ensureChart(document.getElementById('pressChart'), 'press', p.labels, p.data, 'Ilmanpaine', 'hPa');
-
   } catch(e) {
     console.error(e);
-    alert('Datan haku epäonnistui. Tarkista CHANNEL_ID ja API Key.');
+    alert('Datan haku epäonnistui. Tarkista CHANNEL_ID.');
   }
 }
-
-rangeSel.addEventListener('change', render);
-refreshBtn.addEventListener('click', render);
-
-// Chart.js time scale tarvitsee adapterin – käytetään built-in Intl ilman ulkoista libiä:
-Chart.registry.addScales(Chart.registry.getScale('time')); // varmistus, yleensä ei tarvita
 
 render();
 </script>
