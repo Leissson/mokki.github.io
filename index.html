@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<title>Säätila</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #eef; padding: 20px; }
+  h1 { text-align: center; }
+  .data { font-size: 1.5em; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Säätila mökiltä</h1>
+<div class="data" id="temp">Ladataan lämpötilaa...</div>
+
+<script>
+const channelId = "3028480"; // esim. 1234567
+const readApiKey = "BECW0OWUXX79PC39";   // esim. ABCDEFGHIJKL
+
+fetch(`https://api.thingspeak.com/channels/${channelId}/fields/1.json?api_key=${readApiKey}&results=1`)
+  .then(response => response.json())
+  .then(data => {
+    let lastEntry = data.feeds[0];
+    document.getElementById("temp").innerText =
+      "Lämpötila: " + lastEntry.field1 + " °C";
+  })
+  .catch(error => {
+    document.getElementById("temp").innerText = "Virhe datan haussa";
+    console.error(error);
+  });
+</script>
+</body>
+</html>
