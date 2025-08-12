@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/date-fns@3/locale/fi/index.min.js"></script>
 <style>
   body { background: #0e1116; color: #eaeef5; font-family: system-ui, sans-serif; margin: 0; }
   header { text-align: center; padding: 20px; }
@@ -24,34 +25,34 @@
 <body>
 <header>
   <h1>Mökin sää</h1>
-  <p>ThingSpeak → GitHub Pages (public-kanava)</p>
+  <div id="lastUpdated" style="font-size:13px;color:#a8b3c7;margin-top:6px;"></div>
 </header>
+<div class="cards">
+  <div class="card">
+    <div class="label">Lämpötila</div>
+    <div class="value" id="tempVal">–</div>
+    <!-- <div class="updated" id="tempTime">—</div> -->
+  </div>
+  <div class="card">
+    <div class="label">Kosteus</div>
+    <div class="value" id="humVal">–</div>
+    <!-- <div class="updated" id="humTime">—</div> -->
+  </div>
+  <div class="card">
+    <div class="label">Ilmanpaine</div>
+    <div class="value" id="pressVal">–</div>
+    <!-- <div class="updated" id="pressTime">—</div> -->
+  </div>
+</div>
 <div class="controls">
   <label for="rangeSel">Aikaväli:</label>
-  <select id="rangeSel" onchange="loadAllData()">
+  <select id="rangeSel">
     <option value="1">1 päivä</option>
     <option value="3">3 päivää</option>
     <option value="7" selected>7 päivää</option>
     <option value="30">30 päivää</option>
     <option value="90">90 päivää</option>
   </select>
-</div>
-<div class="cards">
-  <div class="card">
-    <div class="label">Lämpötila</div>
-    <div class="value" id="tempVal">–</div>
-    <div class="updated" id="tempTime">—</div>
-  </div>
-  <div class="card">
-    <div class="label">Kosteus</div>
-    <div class="value" id="humVal">–</div>
-    <div class="updated" id="humTime">—</div>
-  </div>
-  <div class="card">
-    <div class="label">Ilmanpaine</div>
-    <div class="value" id="pressVal">–</div>
-    <div class="updated" id="pressTime">—</div>
-  </div>
 </div>
 <div class="chart-section"><canvas id="tempChart"></canvas></div>
 <div class="chart-section"><canvas id="humChart"></canvas></div>
@@ -60,6 +61,8 @@
 const CHANNEL_ID = '3028480';
 const FIELD_TEMP = 1, FIELD_HUM = 2, FIELD_PRESS = 3;
 let charts = {};
+
+document.getElementById('rangeSel').addEventListener('change', loadAllData);
 
 function apiUrl(days) {
   return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?days=${days}&timezone=Europe/Helsinki&limit=8000`;
@@ -70,7 +73,8 @@ function updateCard(feeds, field, valEl, timeEl, unit) {
   const last = [...feeds].reverse().find(f => f[`field${field}`] !== null && f[`field${field}`] !== undefined && f[`field${field}`] !== '' && !Number.isNaN(Number(f[`field${field}`])));
   if (last) {
     valEl.textContent = `${fmtNum(last[`field${field}`])} ${unit}`;
-    timeEl.textContent = `Päivitetty: ${fmtTime(last.created_at)}`;
+    // Poistettu yksittäisen kortin päivitysaika
+    // timeEl.textContent = `Päivitetty: ${fmtTime(last.created_at)}`;
   }
 }
 function makeDataset(feeds, field, label) {
@@ -85,6 +89,19 @@ function makeDataset(feeds, field, label) {
   return { labels, data, label };
 }
 function drawChart(ctx, key, dataset, unit) {
+  const colors = {
+    temp: '#2196f3',
+    hum:  '#43a047',
+    press:'#e53935'
+  };
+
+  // Y-akselin otsikko ja yksikkö
+  const yAxisTitles = {
+    temp: '°C',
+    hum: '%',
+    press: 'mBar'
+  };
+
   if (charts[key]) {
     charts[key].data.labels = dataset.labels;
     charts[key].data.datasets[0].data = dataset.data;
@@ -93,21 +110,81 @@ function drawChart(ctx, key, dataset, unit) {
   }
   charts[key] = new Chart(ctx, {
     type: 'line',
-    data: { labels: dataset.labels, datasets: [{ label: dataset.label, data: dataset.data, borderWidth: 2, pointRadius: 0 }] },
+    data: { 
+      labels: dataset.labels, 
+      datasets: [{
+        label: dataset.label, 
+        data: dataset.data, 
+        borderWidth: 2, 
+        pointRadius: 0,
+        borderColor: colors[key] || '#2196f3',
+        backgroundColor: colors[key] || '#2196f3'
+      }] 
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
         x: {
           type: 'time',
-          time: { tooltipFormat: 'dd.MM.yyyy HH:mm', displayFormats: { hour: 'dd.MM HH:mm', day: 'dd.MM.yyyy' } },
-          ticks: { maxTicksLimit: 9 }
+          time: { 
+            tooltipFormat: 'dd.MM.yyyy HH:mm', 
+            displayFormats: { hour: 'dd.MM HH:mm', day: 'dd.MM.yyyy' }
+          },
+          ticks: { 
+            maxTicksLimit: 9,
+            callback: function(value, index, ticks) {
+              const date = new Date(value);
+              const hours = date.getHours();
+              const minutes = date.getMinutes();
+              let label = date.toLocaleTimeString('fi-FI', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+              });
+              if ((hours === 0 || hours === 1 || hours === 2) && minutes === 0) {
+                label = date.toLocaleDateString('fi-FI', {
+                  weekday: 'short',
+                  day: 'numeric',
+                  month: 'numeric'
+                }) + '\n' + label;
+              }
+              return label;
+            }
+          }
         },
-        y: { beginAtZero: false }
+        y: { 
+          beginAtZero: false,
+          title: {
+            display: true,
+            text: yAxisTitles[key] || ''
+          },
+          ticks: {
+            display: true,
+            mirror: false,
+            // Lämpötila 1 asteen välein, ilmanpaine 2 välein ilman desimaaleja, muut oletus
+            stepSize: key === 'temp' ? 1 : key === 'press' ? 2 : undefined,
+            callback: key === 'press'
+              ? function(value) { return Math.round(value); }
+              : undefined
+          }
+        }
       },
       plugins: { tooltip: { callbacks: { label: c => `${c.parsed.y} ${unit}` } } }
     }
   });
+}
+
+function getLastUpdatedTime(feeds) {
+  const last = [...feeds].reverse().find(f => f.created_at);
+  return last ? last.created_at : null;
+}
+
+function setLastUpdated(feeds) {
+  const lastTime = getLastUpdatedTime(feeds);
+  document.getElementById('lastUpdated').textContent = lastTime
+    ? `Päivitetty: ${fmtTime(lastTime)}`
+    : '';
 }
 
 function loadAllData() {
@@ -115,12 +192,13 @@ function loadAllData() {
   fetch(apiUrl(days), { cache: 'no-store' })
     .then(r => r.json())
     .then(({feeds}) => {
-      updateCard(feeds, FIELD_TEMP, document.getElementById('tempVal'), document.getElementById('tempTime'), '°C');
-      updateCard(feeds, FIELD_HUM, document.getElementById('humVal'), document.getElementById('humTime'), '%');
-      updateCard(feeds, FIELD_PRESS, document.getElementById('pressVal'), document.getElementById('pressTime'), 'hPa');
+      setLastUpdated(feeds);
+      updateCard(feeds, FIELD_TEMP, document.getElementById('tempVal'), null, '°C');
+      updateCard(feeds, FIELD_HUM, document.getElementById('humVal'), null, '%');
+      updateCard(feeds, FIELD_PRESS, document.getElementById('pressVal'), null, 'mBar');
       drawChart(document.getElementById('tempChart'), 'temp', makeDataset(feeds, FIELD_TEMP, 'Lämpötila'), '°C');
       drawChart(document.getElementById('humChart'), 'hum', makeDataset(feeds, FIELD_HUM, 'Kosteus'), '%');
-      drawChart(document.getElementById('pressChart'), 'press', makeDataset(feeds, FIELD_PRESS, 'Ilmanpaine'), 'hPa');
+      drawChart(document.getElementById('pressChart'), 'press', makeDataset(feeds, FIELD_PRESS, 'Ilmanpaine'), 'mBar');
     })
     .catch(e => {
       console.error(e);
