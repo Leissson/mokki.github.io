@@ -90,7 +90,7 @@
     .metric-card { padding: 15px 17px; }
     .metric-value { margin-top: 7px; }
     .toolbar { align-items: stretch; flex-direction: column; gap: 8px; }
-    .segmented { display: grid; grid-template-columns: repeat(5, 1fr); width: 100%; }
+    .segmented { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
     .range-button { min-width: 0; padding-inline: 4px; }
     .chart-panel { min-height: 400px; padding: 16px 12px 10px; border-radius: 18px; }
     .chart-header { align-items: stretch; flex-direction: column; gap: 12px; padding: 0 4px; }
@@ -140,8 +140,7 @@
       <button class="range-button" data-days="1" type="button">1 pv</button>
       <button class="range-button" data-days="3" type="button">3 pv</button>
       <button class="range-button active" data-days="7" type="button" aria-pressed="true">7 pv</button>
-      <button class="range-button" data-days="30" type="button">30 pv</button>
-      <button class="range-button" data-days="90" type="button">90 pv</button>
+      <button class="range-button" data-days="30" type="button">1 kk</button>
     </div>
   </div>
 
@@ -175,18 +174,22 @@ const METRICS = {
 let activeMetric = 'temp';
 let activeDays = 7;
 let currentFeeds = [];
+let summaryFeeds = [];
 let chart = null;
 let requestController = null;
 
 const fiDate = new Intl.DateTimeFormat('fi-FI', { day: 'numeric', month: 'numeric' });
 const fiWeekday = new Intl.DateTimeFormat('fi-FI', { weekday: 'short' });
-const fiMonth = new Intl.DateTimeFormat('fi-FI', { month: 'short' });
 const fiTime = new Intl.DateTimeFormat('fi-FI', { hour: '2-digit', minute: '2-digit', hour12: false });
 
 function apiUrl(days) {
-  const average = days >= 90 ? 60 : days >= 30 ? 30 : null;
-  const query = new URLSearchParams({ days, timezone: 'Europe/Helsinki', limit: 8000 });
-  if (average) query.set('average', average);
+  const query = new URLSearchParams({ days, timezone: 'Europe/Helsinki' });
+  if (days === 30) query.set('average', 30);
+  return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${query}`;
+}
+
+function summaryApiUrl() {
+  const query = new URLSearchParams({ days: 2, timezone: 'Europe/Helsinki' });
   return `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?${query}`;
 }
 
@@ -267,8 +270,7 @@ function axisOptions(days) {
   if (days === 1) return { unit: 'hour', stepSize: 3, maxTicksLimit: 9 };
   if (days === 3) return { unit: 'hour', stepSize: 12, maxTicksLimit: 7 };
   if (days === 7) return { unit: 'day', stepSize: 1, maxTicksLimit: 8 };
-  if (days === 30) return { unit: 'day', stepSize: 5, maxTicksLimit: 7 };
-  return { unit: 'month', stepSize: 1, maxTicksLimit: 5 };
+  return { unit: 'day', stepSize: 5, maxTicksLimit: 7 };
 }
 
 function tickLabel(value, days) {
@@ -276,8 +278,7 @@ function tickLabel(value, days) {
   if (days === 1) return fiTime.format(date);
   if (days === 3) return [fiWeekday.format(date), `${fiDate.format(date)} ${fiTime.format(date)}`];
   if (days === 7) return [fiWeekday.format(date), fiDate.format(date)];
-  if (days === 30) return fiDate.format(date);
-  return fiMonth.format(date).replace('.', '');
+  return fiDate.format(date);
 }
 
 const hoverLine = {
@@ -403,15 +404,29 @@ async function loadAllData() {
   document.getElementById('statusBadge').className = 'status-badge';
   document.getElementById('statusText').textContent = 'Haetaan mittauksia…';
   try {
-    const response = await fetch(apiUrl(activeDays), { cache: 'no-store', signal: requestController.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    if (!Array.isArray(payload.feeds) || !payload.feeds.length) throw new Error('Mittauksia ei löytynyt');
-    currentFeeds = payload.feeds;
-    const last = latestTimestamp(currentFeeds);
-    document.getElementById('lastUpdated').textContent = `Päivitetty ${formatDateTime(last)}`;
+    const requestOptions = { cache: 'no-store', signal: requestController.signal };
+    const [chartResponse, summaryResponse] = await Promise.all([
+      fetch(apiUrl(activeDays), requestOptions),
+      fetch(summaryApiUrl(), requestOptions)
+    ]);
+    if (!chartResponse.ok || !summaryResponse.ok) {
+      throw new Error(`HTTP ${chartResponse.status}/${summaryResponse.status}`);
+    }
+    const [chartPayload, summaryPayload] = await Promise.all([
+      chartResponse.json(),
+      summaryResponse.json()
+    ]);
+    if (!Array.isArray(chartPayload.feeds) || !chartPayload.feeds.length ||
+        !Array.isArray(summaryPayload.feeds) || !summaryPayload.feeds.length) {
+      throw new Error('Mittauksia ei löytynyt');
+    }
+    currentFeeds = chartPayload.feeds;
+    summaryFeeds = summaryPayload.feeds;
+    const last = latestTimestamp(summaryFeeds);
+    const averaging = activeDays === 30 ? ' · kuvaaja 30 min keskiarvo' : '';
+    document.getElementById('lastUpdated').textContent = `Päivitetty ${formatDateTime(last)}${averaging}`;
     updateFreshness(last);
-    updateCards(currentFeeds);
+    updateCards(summaryFeeds);
     drawChart();
     showState('');
   } catch (error) {
